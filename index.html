@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Память</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: #17212b; --panel: #1f2c3a; --cell: #2b3d50; --cell-open: #3d5673;
+    --text: #e9eef5; --muted: #8fa3b8; --accent: #4f8fd6;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #ffffff; --panel: #f2f5f9; --cell: #dde5ee; --cell-open: #b9cde4;
+            --text: #1a2430; --muted: #5b6b7c; --accent: #2b6fb5; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #app { max-width: 520px; margin: 0 auto; padding: 12px 12px calc(12px + env(safe-area-inset-bottom)); }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    padding: 4px 2px 10px; font-size: 15px; color: var(--muted); }
+  header b { color: var(--text); font-size: 17px; }
+  #grid { display: grid; gap: 8px; }
+  button.cell { aspect-ratio: 1; border: 0; border-radius: 12px; background: var(--cell);
+    color: var(--text); font-size: clamp(20px, 7vw, 40px); line-height: 1; cursor: pointer;
+    transition: background .12s ease, transform .12s ease; display: flex;
+    align-items: center; justify-content: center; }
+  button.cell:active { transform: scale(.96); }
+  button.cell.open { background: var(--cell-open); }
+  button.cell.matched { background: var(--cell-open); opacity: .55; cursor: default; }
+  #bar { display: flex; gap: 8px; margin-top: 12px; }
+  #bar button { flex: 1; padding: 12px; border-radius: 12px; border: 0;
+    background: var(--panel); color: var(--text); font-size: 15px; cursor: pointer; }
+  #bar button.sel { background: var(--accent); color: #fff; }
+  #win { margin-top: 12px; padding: 12px; border-radius: 12px; background: var(--panel);
+    text-align: center; font-size: 16px; display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header><b>Память</b><span id="status"></span></header>
+  <div id="grid"></div>
+  <div id="win"></div>
+  <div id="bar">
+    <button data-size="4">4×4</button>
+    <button data-size="6">6×6</button>
+    <button data-size="8">8×8</button>
+    <button id="new">Заново</button>
+  </div>
+</div>
+<script>
+// Эмодзи Unicode 1.1 по списку emojipedia до Sparkle ❇️
+const EMOJI = ['☺️','☹️','☠️','❣️','❤️','✌️','☝️','✍️','♨️','✈️','⌛','⌚','☀️','☁️','☂️','❄️','☃️','☄️','♠️','♥️','♦️','♣️','♟️','☎️','⌨️','✉️','✏️','✒️','✂️','☢️','☣️','↗️','➡️','↘️','↙️','↖️','↕️','↔️','↩️','↪️','✡️','☸️','☯️','✝️','☦️','☪️','☮️','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','▶️','◀️','♀️','♂️','✖️','‼️','〰️','☑️','✔️','✳️','✴️','❇️'];
+const BACK = '🎴';
+const KEY = 'memory-game-v1';
+const FLIP_MS = 650;
+
+let game = null;
+let lock = false;
+
+const grid = document.getElementById('grid');
+const statusEl = document.getElementById('status');
+const winEl = document.getElementById('win');
+
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function newGame(size) {
+  const pairs = (size * size) / 2;
+  const picks = shuffle(EMOJI.slice()).slice(0, pairs);
+  const board = shuffle(picks.flatMap(e => [e, e]));
+  game = { size, board, open: [], matched: [], moves: 0 };
+  lock = false;
+  save();
+  render();
+}
+
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(game)); } catch (e) {}
+}
+
+function load() {
+  try {
+    const g = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (g && g.board && g.board.length === g.size * g.size) return g;
+  } catch (e) {}
+  return null;
+}
+
+function render() {
+  const n = game.size;
+  grid.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+  grid.innerHTML = '';
+  game.board.forEach((emoji, i) => {
+    const b = document.createElement('button');
+    b.className = 'cell';
+    const shown = game.open.includes(i) || game.matched.includes(i);
+    if (shown) b.classList.add('open');
+    if (game.matched.includes(i)) b.classList.add('matched');
+    b.textContent = shown ? emoji : BACK;
+    b.dataset.i = i;
+    b.addEventListener('click', () => tap(i));
+    grid.appendChild(b);
+  });
+  document.querySelectorAll('#bar button[data-size]').forEach(x =>
+    x.classList.toggle('sel', Number(x.dataset.size) === n));
+  const done = game.matched.length;
+  const total = game.board.length;
+  statusEl.textContent = `ходы: ${game.moves} · пары: ${done / 2} из ${total / 2}`;
+  if (done === total) {
+    winEl.style.display = 'block';
+    winEl.textContent = `Все пары найдены за ${game.moves} ходов 🎉`;
+  } else {
+    winEl.style.display = 'none';
+  }
+}
+
+function tap(i) {
+  if (lock) return;
+  if (game.matched.includes(i) || game.open.includes(i)) return;
+  if (game.open.length === 2) return;
+  game.open.push(i);
+  if (game.open.length === 1) { render(); return; }
+  game.moves++;
+  const [a, b] = game.open;
+  if (game.board[a] === game.board[b]) {
+    game.matched.push(a, b);
+    game.open = [];
+    save();
+    render();
+    return;
+  }
+  save();
+  render();
+  lock = true;
+  setTimeout(() => {
+    game.open = [];
+    lock = false;
+    save();
+    render();
+  }, FLIP_MS);
+}
+
+document.getElementById('new').addEventListener('click', () => newGame(game ? game.size : 4));
+document.querySelectorAll('#bar button[data-size]').forEach(b =>
+  b.addEventListener('click', () => newGame(Number(b.dataset.size))));
+
+// Telegram: развернуть на весь экран и подхватить тему
+if (window.Telegram && window.Telegram.WebApp) {
+  const tg = window.Telegram.WebApp;
+  try {
+    tg.ready();
+    tg.expand();
+    if (tg.setHeaderColor) tg.setHeaderColor('secondary_bg_color');
+  } catch (e) {}
+}
+
+game = load() || { size: 4, board: [], matched: [], open: [], moves: 0 };
+if (!game.board.length) newGame(4); else render();
+</script>
+</body>
+</html>
